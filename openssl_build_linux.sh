@@ -20,6 +20,8 @@ GCC_VERSIONS=("4.8" "4.9" "5.3" "5.4" "6.1" "6.2" "6.3" "6.4" "7.2" "7.4" "8.1" 
 TARGET_BRANCH="${1:-develop}"        # Default to develop (latest/12.x) if not specified
 WORK_DIR="${2:-$(pwd)}"             # Default work directory is current directory
 ML_DIR="${3:-}"                      # MarkLogic directory (optional)
+BUILD_ML_FLAG=false                  # Flag to automatically build MarkLogic
+SKIP_FIPS_FLAG=false                 # Flag to skip FIPS build and use existing installation
 
 # Convert WORK_DIR to absolute path
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"
@@ -79,7 +81,7 @@ log_error() {
 show_help() {
     echo "OpenSSL Build Automation Script"
     echo ""
-    echo "Usage: $0 [branch|--clean|--copy-only] [work_directory] [marklogic_directory]"
+    echo "Usage: $0 [branch|--clean|--copy-only|--build-ml|--skip-fips] [work_directory] [marklogic_directory]"
     echo ""
     echo "Parameters:"
     echo "  branch                Target branch: 'develop' (for 12.x/OpenSSL 3.x) or 'develop-11' (for 11.x/OpenSSL 1.x)"
@@ -87,6 +89,8 @@ show_help() {
     echo "  --clean               Clean all build artifacts (INSTALL_DIR and extracted directories)"
     echo "                        If marklogic_directory is provided, also prompts to clean MarkLogic 3rdParty/openssl/"
     echo "  --copy-only           Copy latest build artifacts to MarkLogic without rebuilding"
+    echo "  --build-ml            Automatically build MarkLogic after copying OpenSSL files (skips prompt)"
+    echo "  --skip-fips           Skip FIPS build and use existing FIPS installation from previous build"
     echo "  work_directory        Directory to perform build in (default: current directory)"
     echo "  marklogic_directory   Path to MarkLogic directory (e.g., /users/ml/xu/code/xdmp)"
     echo "                        If provided, will copy build artifacts to 3rdParty/openssl/"
@@ -96,6 +100,8 @@ show_help() {
     echo "  $0 develop-11                          # Build for develop-11 branch (OpenSSL 1.x) in current directory"
     echo "  $0 develop /tmp/build                  # Build for develop branch in /tmp/build"
     echo "  $0 develop-11 . /users/ml/xu/code/xdmp # Build and copy to MarkLogic 3rdParty"
+    echo "  $0 --build-ml . /users/ml/xu/code/xdmp # Build OpenSSL and MarkLogic automatically"
+    echo "  $0 --skip-fips develop-11 .            # Rebuild OpenSSL without rebuilding FIPS"
     echo "  $0 --clean                              # Clean all build artifacts in current directory"
     echo "  $0 --clean /tmp/build                  # Clean all build artifacts in /tmp/build"
     echo "  $0 --clean . /users/ml/xu/code/xdmp    # Clean build artifacts AND MarkLogic 3rdParty/openssl/"
@@ -108,6 +114,7 @@ show_help() {
     echo "  4. Build OpenSSL with FIPS support"
     echo "  5. Install to ./openssl/INSTALL_DIR/{timestamp}"
     echo "  6. (Optional) Copy artifacts to MarkLogic 3rdParty directory"
+    echo "  7. (Optional) Build MarkLogic to test OpenSSL integration"
     echo ""
     echo "Version Selection Logic:"
     echo "  - develop-11: Uses OpenSSL 1.x (checks for latest 1.0.2.* tar file, defaults to $DEFAULT_OPENSSL_VERSION if none found)"
@@ -568,6 +575,50 @@ cleanup_old_builds() {
 
 # Function to build FIPS module
 build_fips() {
+    # Check if --skip-fips flag is set
+    if [[ "$SKIP_FIPS_FLAG" == true ]]; then
+        log_info "Skipping FIPS build (--skip-fips flag detected)"
+        
+        # Look for existing FIPS installation in previous builds
+        local install_base="$BUILD_DIR/INSTALL_DIR"
+        if [[ ! -d "$install_base" ]]; then
+            log_error "No previous builds found in: $install_base"
+            log_error "Cannot skip FIPS build without an existing FIPS installation"
+            log_error "Please run a full build first without --skip-fips"
+            return 1
+        fi
+        
+        # Find the most recent FIPS installation
+        local latest_fips_dir=""
+        for build_dir in $(ls -1dt "$install_base"/*/ 2>/dev/null); do
+            local fips_path="$build_dir/usr/local/ssl/fips-2.0"
+            if [[ -d "$fips_path" ]]; then
+                latest_fips_dir="$fips_path"
+                log_info "Found existing FIPS installation: $fips_path"
+                break
+            fi
+        done
+        
+        if [[ -z "$latest_fips_dir" ]]; then
+            log_error "No existing FIPS installation found in previous builds"
+            log_error "Please run a full build first without --skip-fips"
+            return 1
+        fi
+        
+        # Copy the existing FIPS installation to the new INSTALL_DIR
+        log_info "Copying existing FIPS installation to: $INSTALL_DIR/usr/local/ssl/fips-2.0"
+        mkdir -p "$INSTALL_DIR/usr/local/ssl"
+        cp -r "$latest_fips_dir" "$INSTALL_DIR/usr/local/ssl/fips-2.0"
+        
+        if [[ ! -d "$INSTALL_DIR/usr/local/ssl/fips-2.0" ]]; then
+            log_error "Failed to copy FIPS installation"
+            return 1
+        fi
+        
+        log_info "FIPS installation reused successfully"
+        return 0
+    fi
+    
     log_info "Building OpenSSL FIPS module..."
     
     # Create logs directory if it doesn't exist
@@ -814,6 +865,141 @@ copy_to_marklogic() {
         log_warn "  You may need to manually add: OPENSSL_VERSION  = $OPENSSL_VERSION"
     fi
     
+    # Change to MarkLogic directory
+    cd "$ML_DIR"
+    log_info "Changed to MarkLogic directory: $(pwd)"
+    
+    return 0
+}
+
+# Function to prompt user to build MarkLogic
+prompt_build_marklogic() {
+    if [[ -z "$ML_DIR" ]]; then
+        return 1  # Don't build if no ML_DIR
+    fi
+    
+    # If --build-ml flag is set, automatically build without prompting
+    if [[ "$BUILD_ML_FLAG" == true ]]; then
+        log_info "Auto-building MarkLogic (--build-ml flag detected)"
+        return 0
+    fi
+    
+    echo ""
+    log_info "OpenSSL files have been copied to MarkLogic 3rdParty directory"
+    read -p "Do you want to build MarkLogic to test the integration? (y/N): " -n 1 -r
+    echo
+    
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 0  # User wants to build
+    else
+        log_info "Skipping MarkLogic build"
+        return 1  # User doesn't want to build
+    fi
+}
+
+# Function to build MarkLogic as a test
+build_marklogic_test() {
+    log_info "Building MarkLogic to test OpenSSL integration..."
+    
+    if [[ -z "$ML_DIR" ]]; then
+        log_info "No MarkLogic directory specified, skipping build test"
+        return 0
+    fi
+    
+    if [[ ! -d "$ML_DIR" ]]; then
+        log_error "MarkLogic directory does not exist: $ML_DIR"
+        return 1
+    fi
+    
+    # Change to MarkLogic src directory for building
+    local ml_src_dir="$ML_DIR/src"
+    if [[ ! -d "$ml_src_dir" ]]; then
+        log_error "MarkLogic src directory does not exist: $ml_src_dir"
+        return 1
+    fi
+    
+    cd "$ml_src_dir"
+    log_info "Changed to MarkLogic src directory: $(pwd)"
+    
+    # Check if Makefile exists
+    if [[ ! -f "Makefile" ]]; then
+        log_error "Makefile not found in MarkLogic src directory"
+        log_error "Please ensure you're in the correct MarkLogic source directory"
+        return 1
+    fi
+    
+    # Create build log
+    local build_log="$LOGS_DIR/marklogic_build_${BUILD_DATE}.txt"
+    log_info "MarkLogic build output will be logged to: $build_log"
+    
+    echo ""
+    log_warn "Build started at: $(date)"
+    
+    # Step 1: make clean
+    log_info "Step 1/4: Running 'make clean'..."
+    if ! make clean >> "$build_log" 2>&1; then
+        log_error "make clean failed!"
+        log_error "Check log for details: $build_log"
+        return 1
+    fi
+    
+    # Step 2: make keyed
+    log_info "Step 2/4: Running 'make keyed'..."
+    if ! make keyed >> "$build_log" 2>&1; then
+        log_error "make keyed failed!"
+        log_error "Check log for details: $build_log"
+        echo ""
+        log_info "Showing last 50 lines of build log:"
+        tail -n 50 "$build_log"
+        return 1
+    fi
+    
+    # Step 3: make optimize
+    log_info "Step 3/4: Running 'make optimize'..."
+    if ! make optimize >> "$build_log" 2>&1; then
+        log_error "make optimize failed!"
+        log_error "Check log for details: $build_log"
+        echo ""
+        log_info "Showing last 50 lines of build log:"
+        tail -n 50 "$build_log"
+        return 1
+    fi
+    
+    # Step 4: make -j8
+    log_info "Step 4/4: Running 'make -j8' (this may take a while)..."
+    if ! make -j8 >> "$build_log" 2>&1; then
+        log_error "make -j8 failed!"
+        log_error "Build failed at: $(date)"
+        log_error "Check log for details: $build_log"
+        echo ""
+        log_info "Showing last 50 lines of build log:"
+        tail -n 50 "$build_log"
+        return 1
+    fi
+    
+    log_info "MarkLogic build completed successfully!"
+    log_info "Build finished at: $(date)"
+    echo ""
+    log_info "Verifying OpenSSL linkage in MarkLogic binary..."
+    
+    # Check if the MarkLogic binary exists and verify OpenSSL linking
+    local ml_binary="bin/MarkLogic"
+    if [[ -f "$ml_binary" ]]; then
+        log_info "MarkLogic binary found at: $ml_binary"
+        
+        # Use ldd to check which OpenSSL libraries are linked
+        log_info "OpenSSL library dependencies:"
+        if ldd "$ml_binary" | grep -i ssl; then
+            log_info "OpenSSL libraries are properly linked"
+        else
+            log_warn "No OpenSSL libraries found in binary dependencies"
+        fi
+        echo ""
+    else
+        log_warn "MarkLogic binary not found at: $ml_binary"
+    fi
+    
+    log_info "Build test complete! Check log for details: $build_log"
     return 0
 }
 
@@ -867,6 +1053,24 @@ main() {
     if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         show_help
         return 0
+    fi
+    
+    # Handle build-ml parameter
+    if [[ "$1" == "--build-ml" ]]; then
+        BUILD_ML_FLAG=true
+        shift
+        TARGET_BRANCH="${1:-develop}"
+        WORK_DIR="${2:-$(pwd)}"
+        ML_DIR="${3:-}"
+    fi
+    
+    # Handle skip-fips parameter
+    if [[ "$1" == "--skip-fips" ]]; then
+        SKIP_FIPS_FLAG=true
+        shift
+        TARGET_BRANCH="${1:-develop}"
+        WORK_DIR="${2:-$(pwd)}"
+        ML_DIR="${3:-}"
     fi
     
     # Handle clean parameter
@@ -951,6 +1155,9 @@ main() {
         elif ! copy_to_marklogic; then
             error_message="Failed to copy to MarkLogic 3rdParty directory"
             build_success=false
+        elif [[ -n "$ML_DIR" ]] && prompt_build_marklogic && ! build_marklogic_test; then
+            error_message="MarkLogic build test failed"
+            build_success=false
         fi
     fi
     
@@ -959,8 +1166,11 @@ main() {
         display_summary
         log_info "OpenSSL build automation completed successfully!"
         
-        # Navigate to installation directory on success
-        if [[ -d "$INSTALL_DIR/usr/local" ]]; then
+        # Navigate to MarkLogic directory if specified, otherwise to install directory
+        if [[ -n "$ML_DIR" ]] && [[ -d "$ML_DIR" ]]; then
+            cd "$ML_DIR"
+            log_info "Current directory: $(pwd)"
+        elif [[ -d "$INSTALL_DIR/usr/local" ]]; then
             cd "$INSTALL_DIR/usr/local/ssl"
             log_info "Current directory: $(pwd)"
         else
@@ -971,8 +1181,11 @@ main() {
         log_error "Build failed: $error_message"
         log_error "Check the log files in $LOGS_DIR for details"
         
-        # Navigate to openssl directory on failure
-        if [[ -d "$OPENSSL_DIR" ]]; then
+        # Navigate to MarkLogic directory if specified and exists, otherwise openssl directory
+        if [[ -n "$ML_DIR" ]] && [[ -d "$ML_DIR" ]]; then
+            cd "$ML_DIR"
+            log_info "Current directory: $(pwd)"
+        elif [[ -d "$OPENSSL_DIR" ]]; then
             cd "$OPENSSL_DIR"
             log_info "Current directory: $(pwd)"
         fi
