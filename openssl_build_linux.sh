@@ -748,7 +748,7 @@ copy_to_marklogic() {
     fi
     
     # Create base directories
-    mkdir -p "$ml_3rdparty"/{include,linux,windows}
+    mkdir -p "$ml_3rdparty"/{include,linux,winnt}
     
     # Create macosx directory only for develop-11
     if [[ "$TARGET_BRANCH" == "develop-11" ]]; then
@@ -826,11 +826,11 @@ copy_to_marklogic() {
     echo "    ├── linux/"
     echo "    │   ├── x86_64-gcc7.3/ (shared libraries)"
     echo "    │   └── x86_64-gcc*.* (symlinks)"
-    echo "    ├── windows/          (empty - for future use)"
+    echo "    ├── winnt/          (empty - for future use)"
     if [[ "$TARGET_BRANCH" == "develop-11" ]]; then
         echo "    └── macosx/           (empty - for future use)"
     else
-        echo "    └── windows/          (empty - for future use)"
+        echo "    └── winnt/          (empty - for future use)"
     fi
     echo ""
     
