@@ -576,6 +576,13 @@ cleanup_old_builds() {
 # Function to build FIPS module
 build_fips() {
     # Check if --skip-fips flag is set
+    # OpenSSL 3.x has built-in FIPS provider, skip external FIPS module build
+    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
+        log_info "OpenSSL 3.x detected - skipping external FIPS 2.0 module build"
+        log_info "OpenSSL 3.x uses built-in FIPS provider (enable-fips)"
+        return 0
+    fi
+
     if [[ "$SKIP_FIPS_FLAG" == true ]]; then
         log_info "Skipping FIPS build (--skip-fips flag detected)"
         
@@ -689,12 +696,22 @@ build_openssl() {
     
     cd "$TARBALL_DIR/openssl-$OPENSSL_VERSION"
     
-    # Configure OpenSSL with FIPS
-    local fips_dir="$INSTALL_DIR/usr/local/ssl/fips-2.0"
-    log_info "Configuring OpenSSL with FIPS directory: $fips_dir"
-    if ! CC="$CC_PATH" ./config fips shared --with-fipsdir="$fips_dir" >> "$openssl_log" 2>&1; then
-        log_error "OpenSSL configuration failed. Check log: $openssl_log"
-        return 1
+    # Configure OpenSSL with FIPS - different options for 1.x vs 3.x
+    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
+        # OpenSSL 3.x uses built-in FIPS provider
+        log_info "Configuring OpenSSL 3.x with built-in FIPS provider..."
+        if ! CC="$CC_PATH" ./config enable-fips shared >> "$openssl_log" 2>&1; then
+            log_error "OpenSSL configuration failed. Check log: $openssl_log"
+            return 1
+        fi
+    else
+        # OpenSSL 1.x uses external FIPS 2.0 module
+        local fips_dir="$INSTALL_DIR/usr/local/ssl/fips-2.0"
+        log_info "Configuring OpenSSL 1.x with FIPS directory: $fips_dir"
+        if ! CC="$CC_PATH" ./config fips shared --with-fipsdir="$fips_dir" >> "$openssl_log" 2>&1; then
+            log_error "OpenSSL configuration failed. Check log: $openssl_log"
+            return 1
+        fi
     fi
     
     # Build OpenSSL
@@ -704,11 +721,18 @@ build_openssl() {
         return 1
     fi
     
-    # Install OpenSSL
+    # Install OpenSSL - use DESTDIR for 3.x, INSTALL_PREFIX for 1.x
     log_info "Installing OpenSSL to $INSTALL_DIR..."
-    if ! make install INSTALL_PREFIX="$INSTALL_DIR" >> "$openssl_log" 2>&1; then
-        log_error "OpenSSL installation failed. Check log: $openssl_log"
-        return 1
+    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
+        if ! make install DESTDIR="$INSTALL_DIR" >> "$openssl_log" 2>&1; then
+            log_error "OpenSSL installation failed. Check log: $openssl_log"
+            return 1
+        fi
+    else
+        if ! make install INSTALL_PREFIX="$INSTALL_DIR" >> "$openssl_log" 2>&1; then
+            log_error "OpenSSL installation failed. Check log: $openssl_log"
+            return 1
+        fi
     fi
     
     log_info "OpenSSL build complete. Log: $openssl_log"
@@ -782,11 +806,14 @@ copy_to_marklogic() {
     local lib_src=""
     if [[ -d "$INSTALL_DIR/usr/local/ssl/lib" ]]; then
         lib_src="$INSTALL_DIR/usr/local/ssl/lib"
+    elif [[ -d "$INSTALL_DIR/usr/local/lib64" ]]; then
+        lib_src="$INSTALL_DIR/usr/local/lib64"
     elif [[ -d "$INSTALL_DIR/usr/local/lib" ]]; then
         lib_src="$INSTALL_DIR/usr/local/lib"
     else
         log_error "Library directory not found in:"
         log_error "  $INSTALL_DIR/usr/local/ssl/lib"
+        log_error "  $INSTALL_DIR/usr/local/lib64"
         log_error "  $INSTALL_DIR/usr/local/lib"
         return 1
     fi
@@ -803,7 +830,20 @@ copy_to_marklogic() {
         log_warn "  No .so files found in: $lib_src"
     fi
     
-    # Create GCC version symlinks
+
+    # Copy ossl-modules directory for OpenSSL 3.x (contains fips.so, legacy.so)
+    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
+        local ossl_modules_src="$lib_src/ossl-modules"
+        if [[ -d "$ossl_modules_src" ]]; then
+            log_info "Copying ossl-modules directory (OpenSSL 3.x FIPS provider)..."
+            mkdir -p "$linux_gcc_dir/ossl-modules"
+            cp -P "$ossl_modules_src"/*.so "$linux_gcc_dir/ossl-modules/" 2>/dev/null
+            local modules_count=$(ls "$linux_gcc_dir/ossl-modules"/*.so 2>/dev/null | wc -l)
+            log_info "  Copied $modules_count module(s) to: $linux_gcc_dir/ossl-modules/"
+        else
+            log_warn "  ossl-modules directory not found at: $ossl_modules_src"
+        fi
+    fi
     log_info "Creating GCC version symlinks..."
     cd "$ml_3rdparty/linux"
     
