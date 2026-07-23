@@ -882,7 +882,7 @@ if exist "%FIPS_SRC_DIR%" (
     rmdir /s /q "%FIPS_SRC_DIR%"
 )
 cd /d "%BUILD_DIR%"
-tar xzf "%FIPS_TARBALL%"
+tar --force-local -xzf "%FIPS_TARBALL%"
 if errorlevel 1 (
     echo [ERROR] Failed to extract FIPS tarball
     exit /b 1
@@ -936,7 +936,7 @@ if exist "%MAIN_SRC_DIR%" (
     rmdir /s /q "%MAIN_SRC_DIR%"
 )
 cd /d "%BUILD_DIR%"
-tar xzf "%MAIN_TARBALL%"
+tar --force-local -xzf "%MAIN_TARBALL%"
 if errorlevel 1 (
     echo [ERROR] Failed to extract main tarball
     exit /b 1
