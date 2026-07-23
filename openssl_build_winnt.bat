@@ -855,11 +855,187 @@ REM ============================================================================
 REM Build OpenSSL 3.x
 REM ============================================================================
 :build_openssl3
-echo [INFO] Building OpenSSL 3.x (FIPS from 3.1.2, libraries from 3.3.5)...
+echo [INFO] Building OpenSSL 3.x (FIPS from %OPENSSL3_FIPS_VERSION%, libraries from %OPENSSL_VERSION%)...
 
-REM TODO: Implement OpenSSL 3.x build
-echo [ERROR] OpenSSL 3.x build not yet implemented
-exit /b 1
+if not exist "%LOGS_DIR%" mkdir "%LOGS_DIR%"
+
+REM ---- Step 1: Build OpenSSL FIPS version (3.1.2) for fips.dll and fipsmodule.cnf ----
+echo.
+echo [INFO] ============================================================
+echo [INFO] Step 1: Building OpenSSL %OPENSSL3_FIPS_VERSION% (FIPS provider)
+echo [INFO] ============================================================
+
+set "FIPS_TARBALL=%TARBALL_DIR%\openssl-%OPENSSL3_FIPS_VERSION%.tar.gz"
+if not exist "%FIPS_TARBALL%" (
+    echo [ERROR] FIPS tarball not found: %FIPS_TARBALL%
+    exit /b 1
+)
+
+set "FIPS_SRC_DIR=%BUILD_DIR%\openssl-%OPENSSL3_FIPS_VERSION%"
+set "FIPS_INSTALL_DIR=%BUILD_DIR%\INSTALL_DIR\fips-%OPENSSL3_FIPS_VERSION%"
+set "FIPS_LOG=%LOGS_DIR%\openssl-%OPENSSL3_FIPS_VERSION%-build.log"
+
+REM Extract FIPS tarball
+echo [INFO] Extracting %FIPS_TARBALL%...
+if exist "%FIPS_SRC_DIR%" (
+    echo [INFO] Removing existing FIPS source directory...
+    rmdir /s /q "%FIPS_SRC_DIR%"
+)
+cd /d "%BUILD_DIR%"
+tar xzf "%FIPS_TARBALL%"
+if errorlevel 1 (
+    echo [ERROR] Failed to extract FIPS tarball
+    exit /b 1
+)
+
+REM Configure FIPS build
+echo [INFO] Configuring OpenSSL %OPENSSL3_FIPS_VERSION%...
+cd /d "%FIPS_SRC_DIR%"
+perl Configure enable-fips --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%FIPS_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] FIPS configuration failed. Check log: %FIPS_LOG%
+    exit /b 1
+)
+
+REM Build FIPS
+echo [INFO] Building OpenSSL %OPENSSL3_FIPS_VERSION% (this may take a while)...
+nmake >> "%FIPS_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] FIPS build failed. Check log: %FIPS_LOG%
+    exit /b 1
+)
+
+REM Install FIPS to local directory
+echo [INFO] Installing OpenSSL %OPENSSL3_FIPS_VERSION% to %FIPS_INSTALL_DIR%...
+nmake install DESTDIR="%FIPS_INSTALL_DIR%" >> "%FIPS_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] FIPS install failed. Check log: %FIPS_LOG%
+    exit /b 1
+)
+echo [INFO] OpenSSL %OPENSSL3_FIPS_VERSION% build complete.
+
+REM ---- Step 2: Build main OpenSSL version for libraries ----
+echo.
+echo [INFO] ============================================================
+echo [INFO] Step 2: Building OpenSSL %OPENSSL_VERSION% (main libraries)
+echo [INFO] ============================================================
+
+set "MAIN_TARBALL=%TARBALL_DIR%\openssl-%OPENSSL_VERSION%.tar.gz"
+if not exist "%MAIN_TARBALL%" (
+    echo [ERROR] Main tarball not found: %MAIN_TARBALL%
+    exit /b 1
+)
+
+set "MAIN_SRC_DIR=%BUILD_DIR%\openssl-%OPENSSL_VERSION%"
+set "MAIN_LOG=%LOGS_DIR%\openssl-%OPENSSL_VERSION%-build.log"
+
+REM Extract main tarball
+echo [INFO] Extracting %MAIN_TARBALL%...
+if exist "%MAIN_SRC_DIR%" (
+    echo [INFO] Removing existing source directory...
+    rmdir /s /q "%MAIN_SRC_DIR%"
+)
+cd /d "%BUILD_DIR%"
+tar xzf "%MAIN_TARBALL%"
+if errorlevel 1 (
+    echo [ERROR] Failed to extract main tarball
+    exit /b 1
+)
+
+REM Configure main build
+echo [INFO] Configuring OpenSSL %OPENSSL_VERSION%...
+cd /d "%MAIN_SRC_DIR%"
+perl Configure enable-fips --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%MAIN_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Main configuration failed. Check log: %MAIN_LOG%
+    exit /b 1
+)
+
+REM Build main
+echo [INFO] Building OpenSSL %OPENSSL_VERSION% (this may take a while)...
+nmake >> "%MAIN_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Main build failed. Check log: %MAIN_LOG%
+    exit /b 1
+)
+
+REM Install main to INSTALL_DIR
+echo [INFO] Installing OpenSSL %OPENSSL_VERSION% to %INSTALL_DIR%...
+if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+nmake install DESTDIR="%INSTALL_DIR%" >> "%MAIN_LOG%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Main install failed. Check log: %MAIN_LOG%
+    exit /b 1
+)
+echo [INFO] OpenSSL %OPENSSL_VERSION% build complete.
+
+REM ---- Step 3: Assemble final artifacts ----
+echo.
+echo [INFO] ============================================================
+echo [INFO] Step 3: Assembling final build artifacts
+echo [INFO] ============================================================
+
+REM The install goes to DESTDIR + prefix, so files are at:
+REM   %INSTALL_DIR%\Program Files\MarkLogic\
+set "MAIN_INSTALLED=%INSTALL_DIR%\Program Files\MarkLogic"
+set "FIPS_INSTALLED=%FIPS_INSTALL_DIR%\Program Files\MarkLogic"
+
+REM Reorganize INSTALL_DIR to have a flat structure for copy_to_marklogic
+REM Copy includes from main build
+if exist "%MAIN_INSTALLED%\include" (
+    echo [INFO] Setting up include directory...
+    if not exist "%INSTALL_DIR%\include" mkdir "%INSTALL_DIR%\include"
+    %SystemRoot%\System32\xcopy.exe /s /y /i /q "%MAIN_INSTALLED%\include\openssl" "%INSTALL_DIR%\include\openssl\" >nul
+)
+
+REM Copy libraries from main build
+echo [INFO] Setting up winnt library directory...
+if not exist "%INSTALL_DIR%\winnt\amd64" mkdir "%INSTALL_DIR%\winnt\amd64"
+if exist "%MAIN_INSTALLED%\lib" (
+    copy /y "%MAIN_INSTALLED%\lib\libcrypto.lib" "%INSTALL_DIR%\winnt\amd64\" >nul 2>&1
+    copy /y "%MAIN_INSTALLED%\lib\libssl.lib" "%INSTALL_DIR%\winnt\amd64\" >nul 2>&1
+)
+if exist "%MAIN_INSTALLED%\bin" (
+    copy /y "%MAIN_INSTALLED%\bin\libcrypto-3-x64.dll" "%INSTALL_DIR%\winnt\amd64\" >nul 2>&1
+    copy /y "%MAIN_INSTALLED%\bin\libssl-3-x64.dll" "%INSTALL_DIR%\winnt\amd64\" >nul 2>&1
+)
+
+REM Copy ossl-modules from FIPS build (fips.dll) and main build (legacy.dll)
+echo [INFO] Setting up ossl-modules directory...
+if not exist "%INSTALL_DIR%\winnt\amd64\ossl-modules" mkdir "%INSTALL_DIR%\winnt\amd64\ossl-modules"
+
+REM fips.dll comes from the 3.1.2 build
+if exist "%FIPS_INSTALLED%\lib\ossl-modules\fips.dll" (
+    copy /y "%FIPS_INSTALLED%\lib\ossl-modules\fips.dll" "%INSTALL_DIR%\winnt\amd64\ossl-modules\" >nul
+    echo [INFO]   fips.dll copied from OpenSSL %OPENSSL3_FIPS_VERSION% build
+)
+
+REM legacy.dll comes from the main build
+if exist "%MAIN_INSTALLED%\lib\ossl-modules\legacy.dll" (
+    copy /y "%MAIN_INSTALLED%\lib\ossl-modules\legacy.dll" "%INSTALL_DIR%\winnt\amd64\ossl-modules\" >nul
+    echo [INFO]   legacy.dll copied from OpenSSL %OPENSSL_VERSION% build
+)
+
+REM Copy fipsmodule.cnf from FIPS build
+if exist "%FIPS_INSTALLED%\ssl\fipsmodule.cnf" (
+    copy /y "%FIPS_INSTALLED%\ssl\fipsmodule.cnf" "%INSTALL_DIR%\winnt\amd64\" >nul
+    copy /y "%FIPS_INSTALLED%\ssl\fipsmodule.cnf" "%INSTALL_DIR%\winnt\amd64\ossl-modules\" >nul
+    echo [INFO]   fipsmodule.cnf copied from OpenSSL %OPENSSL3_FIPS_VERSION% build
+)
+
+REM Copy openssl.cnf from main build
+if exist "%MAIN_INSTALLED%\ssl\openssl.cnf" (
+    copy /y "%MAIN_INSTALLED%\ssl\openssl.cnf" "%INSTALL_DIR%\winnt\amd64\" >nul
+    echo [INFO]   openssl.cnf copied from OpenSSL %OPENSSL_VERSION% build
+)
+
+echo.
+echo [INFO] OpenSSL 3.x build and assembly complete!
+echo [INFO]   FIPS provider: OpenSSL %OPENSSL3_FIPS_VERSION%
+echo [INFO]   Libraries:     OpenSSL %OPENSSL_VERSION%
+echo [INFO]   Artifacts at:  %INSTALL_DIR%
+echo [INFO]   Logs at:       %LOGS_DIR%
+exit /b 0
 
 REM ============================================================================
 REM Copy to MarkLogic 3rdParty Directory
