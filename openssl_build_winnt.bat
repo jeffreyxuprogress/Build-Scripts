@@ -141,8 +141,8 @@ REM Check and add Git bin
 echo ;%PATH%; | %SystemRoot%\System32\find.exe /C /I ";C:\Program Files\Git\bin;" >nul 2>&1
 if errorlevel 1 set "PATH=C:\Program Files\Git\bin;%PATH%"
 
-REM Always force Strawberry Perl to front of PATH (must override Cygwin/Git perl)
-set "PATH=C:\Strawberry\perl\bin;%PATH%"
+REM Ensure Strawberry Perl is at the front of PATH (must override Cygwin/Git perl)
+if /i not "%PATH:~0,23%"=="C:\Strawberry\perl\bin" set "PATH=C:\Strawberry\perl\bin;%PATH%"
 
 echo [INFO] Environment setup complete
 
