@@ -170,7 +170,8 @@ for %%f in (openssl-*.tar.gz) do (
 )
 :found_tarballs
 
-if "%CD:~-8%"=="openssl" if defined HAS_TARBALLS (
+echo %CD% | %SystemRoot%\System32\find.exe /I "openssl" >nul 2>&1
+if not errorlevel 1 if defined HAS_TARBALLS (
     set "TARBALL_DIR=%CD%"
     set "OPENSSL_DIR=%CD%"
     set "BUILD_DIR=%CD%"
@@ -362,7 +363,8 @@ if "%SKIP_GIT_UPDATE%"=="1" (
     
     REM Check if we're in openssl directory or work_dir/openssl exists
     for %%I in ("%CD%") do set "CURRENT_DIR=%%~nxI"
-    if /i "%CURRENT_DIR%"=="openssl" (
+    echo !CURRENT_DIR! | %SystemRoot%\System32\find.exe /I "openssl" >nul 2>&1
+    if not errorlevel 1 (
         echo [INFO] Using current openssl directory: %CD%
         set "OPENSSL_DIR=%CD%"
         set "INSTALL_DIR=%OPENSSL_DIR%\INSTALL_DIR\%BUILD_TIMESTAMP%"
@@ -395,7 +397,8 @@ set "OPENSSL_REPO=https://github.bedford.progress.com/marklogic-platform/openssl
 REM Check if we're already in the openssl directory
 for %%I in ("%CD%") do set "CURRENT_DIR=%%~nxI"
 
-if /i "%CURRENT_DIR%"=="openssl" (
+echo !CURRENT_DIR! | %SystemRoot%\System32\find.exe /I "openssl" >nul 2>&1
+if not errorlevel 1 (
     if exist ".git" (
         echo [INFO] Already in openssl directory, updating repository...
         
