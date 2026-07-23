@@ -1,0 +1,7 @@
+--- fipsmodule.cnf
++++ fipsmodule-upgrade.cnf
+@@ -4,3 +4,3 @@
+ security-checks = 1
+-tls1-prf-ems-check = 1
++tls1-prf-ems-check = 0
+ drbg-no-trunc-md = 1

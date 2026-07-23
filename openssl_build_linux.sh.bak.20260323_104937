@@ -8,12 +8,6 @@
 # Don't exit on error - we'll handle errors gracefully
 set +e
 
-# Script directory (for locating patch files)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Always return to the script directory on exit (success or failure)
-trap 'cd "$SCRIPT_DIR"' EXIT
-
 # Configuration
 OPENSSL_REPO="https://github.bedford.progress.com/marklogic-platform/openssl.git"
 FIPS_VERSION="2.0.5"
@@ -51,12 +45,9 @@ fi
 # Generate timestamp for log files and install directory
 BUILD_DATE=$(date +%Y%m%d_%H%M%S)
 
-# Install directory base - subdirectories created per branch and version
-INSTALL_DIR_BASE="$BUILD_DIR/INSTALL_DIR"
+# Install directory with timestamp subdirectory
+INSTALL_DIR="$BUILD_DIR/INSTALL_DIR/$BUILD_DATE"
 LOGS_DIR="$BUILD_DIR/logs"
-
-# FIPS version of OpenSSL (3.1.2 provides fips.so and fipsmodule.cnf)
-FIPS_OPENSSL_VERSION="3.1.2"
 
 # Determine OpenSSL version based on branch
 if [[ "$TARGET_BRANCH" == "develop-11" ]]; then
@@ -64,7 +55,7 @@ if [[ "$TARGET_BRANCH" == "develop-11" ]]; then
     DEFAULT_OPENSSL_VERSION="1.0.2zm"  # Current latest 1.x version
 else
     OPENSSL_MAJOR_VERSION="3"
-    DEFAULT_OPENSSL_VERSION="3.5.5"    # Current latest 3.x version
+    DEFAULT_OPENSSL_VERSION="3.0.15"   # Current latest 3.x version
 fi
 
 # Color codes for output
@@ -119,20 +110,11 @@ show_help() {
     echo "The script will:"
     echo "  1. Clone/update OpenSSL repository"
     echo "  2. Determine OpenSSL version based on branch and available tar files"
-    echo "  3. Build FIPS $FIPS_VERSION (for 1.x only)"
-    echo "  4. For develop (3.x): Build OpenSSL $FIPS_OPENSSL_VERSION (FIPS provider) AND latest 3.x.x"
-    echo "     For develop-11 (1.x): Build single OpenSSL version"
-    echo "  5. Install to ./openssl/INSTALL_DIR/{branch}/openssl-{version}"
+    echo "  3. Build FIPS $FIPS_VERSION"
+    echo "  4. Build OpenSSL with FIPS support"
+    echo "  5. Install to ./openssl/INSTALL_DIR/{timestamp}"
     echo "  6. (Optional) Copy artifacts to MarkLogic 3rdParty directory"
     echo "  7. (Optional) Build MarkLogic to test OpenSSL integration"
-    echo ""
-    echo "Install Directory Structure:"
-    echo "  INSTALL_DIR/"
-    echo "    ├── develop/"
-    echo "    │   ├── openssl-$FIPS_OPENSSL_VERSION/   (fips.so, fipsmodule.cnf)"
-    echo "    │   └── openssl-3.x.x/                   (lib, include - latest version)"
-    echo "    └── develop-11/"
-    echo "        └── openssl-1.0.2xx/                  (single build)"
     echo ""
     echo "Version Selection Logic:"
     echo "  - develop-11: Uses OpenSSL 1.x (checks for latest 1.0.2.* tar file, defaults to $DEFAULT_OPENSSL_VERSION if none found)"
@@ -357,13 +339,11 @@ copy_only() {
     if [[ -n "$required_major_version" ]]; then
         log_info "Looking for OpenSSL ${required_major_version}.x builds..."
         
-        # Filter builds by major version - search branch/version subdirectories
-        for build_dir in $(find "$install_base" -mindepth 1 -maxdepth 2 -type d | sort -r); do
+        # Filter builds by major version
+        for build_dir in $(ls -1dt "$install_base"/*/ 2>/dev/null); do
             # Check version in this build
             local version=""
-            if [[ -d "$build_dir/include/openssl" ]]; then
-                version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
-            elif [[ -d "$build_dir/usr/local/ssl/include" ]]; then
+            if [[ -d "$build_dir/usr/local/ssl/include" ]]; then
                 version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/usr/local/ssl/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
             elif [[ -d "$build_dir/usr/local/include" ]]; then
                 version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/usr/local/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
@@ -379,18 +359,14 @@ copy_only() {
         if [[ -z "$latest_build" ]]; then
             log_error "No OpenSSL ${required_major_version}.x builds found in: $install_base"
             log_error "Available builds:"
-            for build_dir in $(find "$install_base" -mindepth 1 -maxdepth 2 -type d | sort -r); do
+            for build_dir in $(ls -1dt "$install_base"/*/ 2>/dev/null); do
                 local version=""
-                if [[ -d "$build_dir/include/openssl" ]]; then
-                    version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
-                elif [[ -d "$build_dir/usr/local/ssl/include" ]]; then
+                if [[ -d "$build_dir/usr/local/ssl/include" ]]; then
                     version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/usr/local/ssl/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
                 elif [[ -d "$build_dir/usr/local/include" ]]; then
                     version=$(grep "OPENSSL_VERSION_TEXT" "$build_dir/usr/local/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
                 fi
-                if [[ -n "$version" ]]; then
-                    log_error "  $(basename "$build_dir"): OpenSSL $version"
-                fi
+                log_error "  $(basename "$build_dir"): OpenSSL $version"
             done
             log_error "Please build OpenSSL ${required_major_version}.x first"
             return 1
@@ -410,15 +386,12 @@ copy_only() {
     latest_build="${latest_build%/}"
     
     # Detect OpenSSL version from the build directory
-    # Check for --prefix layout (include/openssl), usr/local/ssl (1.0.2), or usr/local (3.x DESTDIR)
-    if [[ -d "$latest_build/include/openssl" ]]; then
-        # OpenSSL 3.x with --prefix layout
-        OPENSSL_VERSION=$(grep "OPENSSL_VERSION_TEXT" "$latest_build/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
-    elif [[ -d "$latest_build/usr/local/ssl/lib" ]]; then
+    # Check for usr/local/ssl/lib (1.0.2) or usr/local/lib (3.x)
+    if [[ -d "$latest_build/usr/local/ssl/lib" ]]; then
         # OpenSSL 1.0.2 - look for version in headers (strip -fips suffix)
         OPENSSL_VERSION=$(grep "OPENSSL_VERSION_TEXT" "$latest_build/usr/local/ssl/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
     elif [[ -d "$latest_build/usr/local/lib" ]]; then
-        # OpenSSL 3.x with DESTDIR layout (strip any suffix)
+        # OpenSSL 3.x (strip any suffix)
         OPENSSL_VERSION=$(grep "OPENSSL_VERSION_TEXT" "$latest_build/usr/local/include/openssl/opensslv.h" 2>/dev/null | head -1 | sed 's/.*OpenSSL \([0-9][^ -]*\).*/\1/')
     fi
     
@@ -533,7 +506,7 @@ setup_openssl_repo() {
         
         # Update OPENSSL_DIR to current directory
         OPENSSL_DIR="$(pwd)"
-        INSTALL_DIR_BASE="$OPENSSL_DIR/INSTALL_DIR"
+        INSTALL_DIR="$OPENSSL_DIR/INSTALL_DIR/$BUILD_DATE"
         LOGS_DIR="$OPENSSL_DIR/logs"
         
     else
@@ -603,13 +576,6 @@ cleanup_old_builds() {
 # Function to build FIPS module
 build_fips() {
     # Check if --skip-fips flag is set
-    # OpenSSL 3.x has built-in FIPS provider, skip external FIPS module build
-    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
-        log_info "OpenSSL 3.x detected - skipping external FIPS 2.0 module build"
-        log_info "OpenSSL 3.x uses built-in FIPS provider (enable-fips)"
-        return 0
-    fi
-
     if [[ "$SKIP_FIPS_FLAG" == true ]]; then
         log_info "Skipping FIPS build (--skip-fips flag detected)"
         
@@ -624,7 +590,7 @@ build_fips() {
         
         # Find the most recent FIPS installation
         local latest_fips_dir=""
-        for build_dir in $(find "$install_base" -mindepth 1 -maxdepth 2 -type d | sort -r); do
+        for build_dir in $(ls -1dt "$install_base"/*/ 2>/dev/null); do
             local fips_path="$build_dir/usr/local/ssl/fips-2.0"
             if [[ -d "$fips_path" ]]; then
                 latest_fips_dir="$fips_path"
@@ -702,81 +668,50 @@ build_fips() {
 }
 
 # Function to build OpenSSL
-# Usage: build_openssl [version] [install_dir]
-#   version    - OpenSSL version to build (defaults to $OPENSSL_VERSION)
-#   install_dir - Directory to install to (used as --prefix)
 build_openssl() {
-    local build_version="${1:-$OPENSSL_VERSION}"
-    local install_dir="${2:-$INSTALL_DIR}"
-
-    log_info "Building OpenSSL $build_version with FIPS support..."
-    log_info "Install prefix: $install_dir"
+    log_info "Building OpenSSL with FIPS support..."
     
-    # Create logs directory if it doesn't exist
-    mkdir -p "$LOGS_DIR"
-    
-    local openssl_log="$LOGS_DIR/openssl_${build_version}_${BUILD_DATE}.txt"
+    local openssl_log="$LOGS_DIR/openssl_${BUILD_DATE}.txt"
     log_info "OpenSSL build output will be logged to: $openssl_log"
     log_info "Looking for OpenSSL tarball in: $TARBALL_DIR"
     
     cd "$TARBALL_DIR"
     
-    if [[ ! -f "openssl-$build_version.tar.gz" ]]; then
-        log_error "OpenSSL tarball not found: $TARBALL_DIR/openssl-$build_version.tar.gz"
+    if [[ ! -f "openssl-$OPENSSL_VERSION.tar.gz" ]]; then
+        log_error "OpenSSL tarball not found: $TARBALL_DIR/openssl-$OPENSSL_VERSION.tar.gz"
         return 1
     fi
     
-    if ! tar -xzf "openssl-$build_version.tar.gz" 2>> "$openssl_log"; then
+    if ! tar -xzf "openssl-$OPENSSL_VERSION.tar.gz" 2>> "$openssl_log"; then
         log_error "Failed to extract OpenSSL tarball"
         return 1
     fi
     
-    cd "$TARBALL_DIR/openssl-$build_version"
+    cd "$TARBALL_DIR/openssl-$OPENSSL_VERSION"
     
-    # Create the install directory
-    mkdir -p "$install_dir"
-    
-    # Configure OpenSSL with FIPS - different options for 1.x vs 3.x
-    if [[ "$build_version" == 3.* ]]; then
-        # OpenSSL 3.x uses built-in FIPS provider with --prefix
-        log_info "Configuring OpenSSL 3.x with built-in FIPS provider..."
-        log_info "  --prefix=$install_dir"
-        if ! CC="$CC_PATH" ./config enable-fips shared --api=1.0.2 --prefix="$install_dir" >> "$openssl_log" 2>&1; then
-            log_error "OpenSSL configuration failed. Check log: $openssl_log"
-            return 1
-        fi
-    else
-        # OpenSSL 1.x uses external FIPS 2.0 module (no --prefix, uses INSTALL_PREFIX at install time)
-        local fips_dir="$install_dir/usr/local/ssl/fips-2.0"
-        log_info "Configuring OpenSSL 1.x with FIPS directory: $fips_dir"
-        if ! CC="$CC_PATH" ./config fips shared --with-fipsdir="$fips_dir" >> "$openssl_log" 2>&1; then
-            log_error "OpenSSL configuration failed. Check log: $openssl_log"
-            return 1
-        fi
+    # Configure OpenSSL with FIPS
+    local fips_dir="$INSTALL_DIR/usr/local/ssl/fips-2.0"
+    log_info "Configuring OpenSSL with FIPS directory: $fips_dir"
+    if ! CC="$CC_PATH" ./config fips shared --with-fipsdir="$fips_dir" >> "$openssl_log" 2>&1; then
+        log_error "OpenSSL configuration failed. Check log: $openssl_log"
+        return 1
     fi
     
     # Build OpenSSL
-    log_info "Building OpenSSL $build_version (this may take a while)..."
+    log_info "Building OpenSSL (this may take a while)..."
     if ! make >> "$openssl_log" 2>&1; then
         log_error "OpenSSL build failed. Check log: $openssl_log"
         return 1
     fi
     
-    # Install OpenSSL - use --prefix for 3.x, INSTALL_PREFIX for 1.x
-    log_info "Installing OpenSSL $build_version to $install_dir..."
-    if [[ "$build_version" == 3.* ]]; then
-        if ! make install >> "$openssl_log" 2>&1; then
-            log_error "OpenSSL installation failed. Check log: $openssl_log"
-            return 1
-        fi
-    else
-        if ! make install INSTALL_PREFIX="$install_dir" >> "$openssl_log" 2>&1; then
-            log_error "OpenSSL installation failed. Check log: $openssl_log"
-            return 1
-        fi
+    # Install OpenSSL
+    log_info "Installing OpenSSL to $INSTALL_DIR..."
+    if ! make install INSTALL_PREFIX="$INSTALL_DIR" >> "$openssl_log" 2>&1; then
+        log_error "OpenSSL installation failed. Check log: $openssl_log"
+        return 1
     fi
     
-    log_info "OpenSSL $build_version build complete. Log: $openssl_log"
+    log_info "OpenSSL build complete. Log: $openssl_log"
     return 0
 }
 
@@ -821,20 +756,15 @@ copy_to_marklogic() {
         log_info "Created macosx directory (develop-11 branch)"
     fi
     
-    # Copy include headers - check possible locations
-    # For 3.x with --prefix: <prefix>/include
-    # For 1.x with INSTALL_PREFIX: <install_dir>/usr/local/ssl/include
+    # Copy include headers - check both possible locations
     log_info "Copying include headers..."
     local include_src=""
-    if [[ -d "$INSTALL_DIR/include/openssl" ]]; then
-        include_src="$INSTALL_DIR/include"
-    elif [[ -d "$INSTALL_DIR/usr/local/ssl/include" ]]; then
+    if [[ -d "$INSTALL_DIR/usr/local/ssl/include" ]]; then
         include_src="$INSTALL_DIR/usr/local/ssl/include"
     elif [[ -d "$INSTALL_DIR/usr/local/include" ]]; then
         include_src="$INSTALL_DIR/usr/local/include"
     else
         log_error "Include directory not found in:"
-        log_error "  $INSTALL_DIR/include"
         log_error "  $INSTALL_DIR/usr/local/ssl/include"
         log_error "  $INSTALL_DIR/usr/local/include"
         return 1
@@ -850,22 +780,13 @@ copy_to_marklogic() {
     
     log_info "Copying shared libraries (preserving symlinks)..."
     local lib_src=""
-    if [[ -d "$INSTALL_DIR/lib64" ]]; then
-        lib_src="$INSTALL_DIR/lib64"
-    elif [[ -d "$INSTALL_DIR/lib" ]] && ls "$INSTALL_DIR/lib"/*.so* 1> /dev/null 2>&1; then
-        lib_src="$INSTALL_DIR/lib"
-    elif [[ -d "$INSTALL_DIR/usr/local/ssl/lib" ]]; then
+    if [[ -d "$INSTALL_DIR/usr/local/ssl/lib" ]]; then
         lib_src="$INSTALL_DIR/usr/local/ssl/lib"
-    elif [[ -d "$INSTALL_DIR/usr/local/lib64" ]]; then
-        lib_src="$INSTALL_DIR/usr/local/lib64"
     elif [[ -d "$INSTALL_DIR/usr/local/lib" ]]; then
         lib_src="$INSTALL_DIR/usr/local/lib"
     else
         log_error "Library directory not found in:"
-        log_error "  $INSTALL_DIR/lib64"
-        log_error "  $INSTALL_DIR/lib"
         log_error "  $INSTALL_DIR/usr/local/ssl/lib"
-        log_error "  $INSTALL_DIR/usr/local/lib64"
         log_error "  $INSTALL_DIR/usr/local/lib"
         return 1
     fi
@@ -882,118 +803,7 @@ copy_to_marklogic() {
         log_warn "  No .so files found in: $lib_src"
     fi
     
-
-    # Copy ossl-modules directory for OpenSSL 3.x (contains fips.so, legacy.so)
-    if [[ "$OPENSSL_VERSION" == 3.* ]]; then
-        # For develop (two-build): fips.so comes from 3.1.2, everything else from latest
-        # For single build: fips.so comes from the same build
-        local fips_source_dir=""
-        if [[ -n "$FIPS_INSTALL_DIR" ]]; then
-            # Two-build mode: get fips.so from the 3.1.2 build
-            log_info "Using FIPS provider from OpenSSL $FIPS_OPENSSL_VERSION build: $FIPS_INSTALL_DIR"
-            # Find the ossl-modules directory in the FIPS build
-            if [[ -d "$FIPS_INSTALL_DIR/lib64/ossl-modules" ]]; then
-                fips_source_dir="$FIPS_INSTALL_DIR/lib64/ossl-modules"
-            elif [[ -d "$FIPS_INSTALL_DIR/lib/ossl-modules" ]]; then
-                fips_source_dir="$FIPS_INSTALL_DIR/lib/ossl-modules"
-            fi
-        else
-            # Single build mode: get fips.so from the same build as lib/include
-            fips_source_dir="$lib_src/ossl-modules"
-        fi
-
-        # Copy fips.so from the FIPS source
-        if [[ -n "$fips_source_dir" ]] && [[ -d "$fips_source_dir" ]]; then
-            log_info "Copying ossl-modules directory (OpenSSL 3.x FIPS provider)..."
-            mkdir -p "$linux_gcc_dir/ossl-modules"
-            cp -P "$fips_source_dir"/*.so "$linux_gcc_dir/ossl-modules/" 2>/dev/null
-            local modules_count=$(ls "$linux_gcc_dir/ossl-modules"/*.so 2>/dev/null | wc -l)
-            log_info "  Copied $modules_count module(s) to: $linux_gcc_dir/ossl-modules/"
-            if [[ -n "$FIPS_INSTALL_DIR" ]]; then
-                log_info "  fips.so sourced from: $fips_source_dir (OpenSSL $FIPS_OPENSSL_VERSION)"
-            fi
-        else
-            log_warn "  ossl-modules directory not found"
-            if [[ -n "$FIPS_INSTALL_DIR" ]]; then
-                log_warn "  Checked: $FIPS_INSTALL_DIR/lib64/ossl-modules"
-                log_warn "  Checked: $FIPS_INSTALL_DIR/lib/ossl-modules"
-            else
-                log_warn "  Checked: $lib_src/ossl-modules"
-            fi
-        fi
-
-        # Also copy legacy.so from the latest build if available and not already copied
-        if [[ -n "$FIPS_INSTALL_DIR" ]] && [[ -d "$lib_src/ossl-modules" ]]; then
-            # In two-build mode, we also want legacy.so from the latest build
-            if [[ -f "$lib_src/ossl-modules/legacy.so" ]] && [[ ! -f "$linux_gcc_dir/ossl-modules/legacy.so" ]]; then
-                cp -P "$lib_src/ossl-modules/legacy.so" "$linux_gcc_dir/ossl-modules/" 2>/dev/null
-                log_info "  legacy.so copied from latest build: $lib_src/ossl-modules/"
-            fi
-        fi
-
-        # Copy fipsmodule.cnf from the FIPS build to both ossl-modules/ and gcc dir
-        if [[ -n "$FIPS_INSTALL_DIR" ]]; then
-            local fips_cnf=""
-            if [[ -f "$FIPS_INSTALL_DIR/ssl/fipsmodule.cnf" ]]; then
-                fips_cnf="$FIPS_INSTALL_DIR/ssl/fipsmodule.cnf"
-            fi
-            if [[ -n "$fips_cnf" ]]; then
-                cp "$fips_cnf" "$linux_gcc_dir/ossl-modules/" 2>/dev/null
-                cp "$fips_cnf" "$linux_gcc_dir/" 2>/dev/null
-                log_info "  fipsmodule.cnf copied from: $fips_cnf"
-
-                # Generate fipsmodule-upgrade.cnf via patch (tls1-prf-ems-check = 0 for upgrades)
-                if [[ -f "$SCRIPT_DIR/fipsmodule-upgrade.patch" ]]; then
-                    cp "$linux_gcc_dir/fipsmodule.cnf" "$linux_gcc_dir/fipsmodule-upgrade.cnf"
-                    patch "$linux_gcc_dir/fipsmodule-upgrade.cnf" < "$SCRIPT_DIR/fipsmodule-upgrade.patch"
-                    log_info "  fipsmodule-upgrade.cnf created via patch in: $linux_gcc_dir/"
-                else
-                    log_warn "  fipsmodule-upgrade.patch not found at: $SCRIPT_DIR/"
-                fi
-            else
-                log_warn "  fipsmodule.cnf not found in FIPS build at: $FIPS_INSTALL_DIR/ssl/"
-            fi
-        fi
-
-        # Copy SSL config files to linux/ssl/ directory (needed by MarkLogic build)
-        local ssl_dir="$ml_3rdparty/linux/ssl"
-        mkdir -p "$ssl_dir"
-        log_info "Copying SSL config files to: $ssl_dir"
-
-        # Find the openssl.cnf from the main OpenSSL build
-        local openssl_cnf=""
-        if [[ -f "$INSTALL_DIR/ssl/openssl.cnf" ]]; then
-            openssl_cnf="$INSTALL_DIR/ssl/openssl.cnf"
-        elif [[ -n "$FIPS_INSTALL_DIR" ]] && [[ -f "$FIPS_INSTALL_DIR/ssl/openssl.cnf" ]]; then
-            openssl_cnf="$FIPS_INSTALL_DIR/ssl/openssl.cnf"
-        fi
-
-        if [[ -n "$openssl_cnf" ]]; then
-            # Copy openssl.cnf as-is
-            cp "$openssl_cnf" "$ssl_dir/openssl.cnf"
-            log_info "  openssl.cnf copied from: $openssl_cnf"
-
-            # Generate openssl-fips.cnf via patch (openssl.cnf with FIPS provider enabled)
-            if [[ -f "$SCRIPT_DIR/openssl-fips.patch" ]]; then
-                cp "$ssl_dir/openssl.cnf" "$ssl_dir/openssl-fips.cnf"
-                patch "$ssl_dir/openssl-fips.cnf" < "$SCRIPT_DIR/openssl-fips.patch"
-                log_info "  openssl-fips.cnf created via patch in: $ssl_dir/"
-            else
-                log_warn "  openssl-fips.patch not found at: $SCRIPT_DIR/"
-            fi
-
-            # Generate openssl-fips-upgrade.cnf via patch
-            if [[ -f "$SCRIPT_DIR/openssl-fips-upgrade.patch" ]]; then
-                cp "$ssl_dir/openssl.cnf" "$ssl_dir/openssl-fips-upgrade.cnf"
-                patch "$ssl_dir/openssl-fips-upgrade.cnf" < "$SCRIPT_DIR/openssl-fips-upgrade.patch"
-                log_info "  openssl-fips-upgrade.cnf created via patch in: $ssl_dir/"
-            else
-                log_warn "  openssl-fips-upgrade.patch not found at: $SCRIPT_DIR/"
-            fi
-        else
-            log_warn "  openssl.cnf not found in INSTALL_DIR or FIPS_INSTALL_DIR"
-        fi
-    fi
+    # Create GCC version symlinks
     log_info "Creating GCC version symlinks..."
     cd "$ml_3rdparty/linux"
     
@@ -1200,63 +1010,41 @@ display_summary() {
     echo "Work Directory: $WORK_DIR"
     echo "OpenSSL/Tarball Directory: $OPENSSL_DIR"
     echo "Build Directory: $BUILD_DIR"
-    echo "Install Base Directory: $INSTALL_DIR_BASE"
-    echo "Branch Install Directory: $INSTALL_DIR_BASE/$TARGET_BRANCH"
+    echo "Install Directory: $INSTALL_DIR"
     echo "Logs Directory: $LOGS_DIR"
     echo "FIPS Version: $FIPS_VERSION"
     echo "OpenSSL Version: $OPENSSL_VERSION"
-    if [[ "$TARGET_BRANCH" != "develop-11" ]] && [[ -n "$FIPS_OPENSSL_VERSION" ]]; then
-        echo "FIPS OpenSSL Version: $FIPS_OPENSSL_VERSION"
-    fi
     echo "Build Date: $BUILD_DATE"
     echo "======================================"
     
-    local branch_dir="$INSTALL_DIR_BASE/$TARGET_BRANCH"
-    
-    if [[ "$TARGET_BRANCH" != "develop-11" ]] && [[ -n "$FIPS_INSTALL_DIR" ]]; then
-        # Two-build summary for develop branch
-        log_info "Build artifacts are available at:"
-        echo ""
-        echo "  FIPS provider (OpenSSL $FIPS_OPENSSL_VERSION):"
-        echo "    $FIPS_INSTALL_DIR/"
-        echo "    └── fips.so, fipsmodule.cnf"
-        echo ""
-        echo "  Latest (OpenSSL $OPENSSL_VERSION):"
-        echo "    $INSTALL_DIR/"
-        echo "    ├── include/  (headers)"
-        echo "    └── lib/      (shared libraries)"
-        echo ""
-    elif [[ -d "$INSTALL_DIR/usr/local/ssl" ]]; then
+    if [[ -d "$INSTALL_DIR/usr/local/ssl" ]]; then
         log_info "Build artifacts are available at:"
         echo "  Headers: $INSTALL_DIR/usr/local/ssl/include"
         echo "  Libraries: $INSTALL_DIR/usr/local/ssl/lib"
-    elif [[ -d "$INSTALL_DIR" ]]; then
+        echo ""
+        log_info "Build logs are available at:"
+        echo "  FIPS Log: $LOGS_DIR/openssl_fips_${BUILD_DATE}.txt"
+        echo "  OpenSSL Log: $LOGS_DIR/openssl_${BUILD_DATE}.txt"
+        echo ""
+        log_info "Next steps:"
+        echo "  Copy headers and shared libraries from the installed location"
+        echo "  to dist/linux/x86_64-gccX.Y as needed"
+    elif [[ -d "$INSTALL_DIR/usr/local" ]]; then
         log_info "Build artifacts are available at:"
-        echo "  Install directory: $INSTALL_DIR"
+        echo "  Headers: $INSTALL_DIR/usr/local/include"
+        echo "  Libraries: $INSTALL_DIR/usr/local/lib"
+        echo ""
+        log_info "Build logs are available at:"
+        echo "  FIPS Log: $LOGS_DIR/openssl_fips_${BUILD_DATE}.txt"
+        echo "  OpenSSL Log: $LOGS_DIR/openssl_${BUILD_DATE}.txt"
+        echo ""
+        log_info "Next steps:"
+        echo "  Copy headers and shared libraries from the installed location"
+        echo "  to dist/linux/x86_64-gccX.Y as needed"
     else
         log_error "Build artifacts not found. Build may have failed."
         log_error "Check the log files in $LOGS_DIR for details"
-        return
     fi
-    
-    echo ""
-    log_info "Directory structure:"
-    echo "  $INSTALL_DIR_BASE/"
-    echo "    └── $TARGET_BRANCH/"
-    if [[ "$TARGET_BRANCH" != "develop-11" ]] && [[ -n "$FIPS_INSTALL_DIR" ]]; then
-        echo "        ├── openssl-$FIPS_OPENSSL_VERSION/  (fips.so, fipsmodule.cnf)"
-        echo "        └── openssl-$OPENSSL_VERSION/       (lib, include)"
-    else
-        echo "        └── openssl-$OPENSSL_VERSION/"
-    fi
-    
-    echo ""
-    log_info "Build logs are available at:"
-    echo "  $LOGS_DIR/"
-    echo ""
-    log_info "Next steps:"
-    echo "  Copy headers and shared libraries from the installed location"
-    echo "  to dist/linux/x86_64-gccX.Y as needed"
 }
 
 # Main execution
@@ -1358,76 +1146,18 @@ main() {
         if ! cleanup_old_builds; then
             error_message="Failed to cleanup old builds"
             build_success=false
-        else
-            # Set up install directories under INSTALL_DIR_BASE/<branch>/openssl-<version>
-            # For develop branch: build both 3.1.2 (FIPS) and latest 3.x.x
-            # For develop-11 branch: build single version
-            local branch_install_dir="$INSTALL_DIR_BASE/$TARGET_BRANCH"
-            mkdir -p "$branch_install_dir"
-
-            # For develop-11, set INSTALL_DIR early so build_fips (--skip-fips) can use it
-            if [[ "$TARGET_BRANCH" == "develop-11" ]]; then
-                INSTALL_DIR="$branch_install_dir/openssl-$OPENSSL_VERSION"
-            fi
-
-            if ! build_fips; then
-                error_message="FIPS build failed"
-                build_success=false
-            elif [[ "$TARGET_BRANCH" != "develop-11" ]] && [[ "$OPENSSL_VERSION" == 3.* ]]; then
-                # Build OpenSSL 3.1.2 first (provides fips.so and fipsmodule.cnf)
-                local fips_install_dir="$branch_install_dir/openssl-$FIPS_OPENSSL_VERSION"
-                log_info "========================================"
-                log_info "Step 1: Building OpenSSL $FIPS_OPENSSL_VERSION (FIPS provider)"
-                log_info "  Install directory: $fips_install_dir"
-                log_info "========================================"
-                
-                if ! build_openssl "$FIPS_OPENSSL_VERSION" "$fips_install_dir"; then
-                    error_message="OpenSSL $FIPS_OPENSSL_VERSION (FIPS) build failed"
-                    build_success=false
-                else
-                    # Build latest OpenSSL 3.x.x (provides lib and include)
-                    local latest_install_dir="$branch_install_dir/openssl-$OPENSSL_VERSION"
-                    log_info "========================================"
-                    log_info "Step 2: Building OpenSSL $OPENSSL_VERSION (latest)"
-                    log_info "  Install directory: $latest_install_dir"
-                    log_info "========================================"
-                    
-                    if ! build_openssl "$OPENSSL_VERSION" "$latest_install_dir"; then
-                        error_message="OpenSSL $OPENSSL_VERSION build failed"
-                        build_success=false
-                    else
-                        # Set INSTALL_DIR to the latest build for downstream steps
-                        INSTALL_DIR="$latest_install_dir"
-                        FIPS_INSTALL_DIR="$fips_install_dir"
-                        
-                        log_info "========================================"
-                        log_info "Both OpenSSL builds complete!"
-                        log_info "  FIPS (fips.so, fipsmodule.cnf): $fips_install_dir"
-                        log_info "  Latest (lib, include):          $latest_install_dir"
-                        log_info "========================================"
-                    fi
-                fi
-            else
-                # Single build for develop-11 or non-3.x versions
-                local install_dir="$branch_install_dir/openssl-$OPENSSL_VERSION"
-                INSTALL_DIR="$install_dir"
-                
-                if ! build_openssl "$OPENSSL_VERSION" "$install_dir"; then
-                    error_message="OpenSSL build failed"
-                    build_success=false
-                fi
-            fi
-            
-            # Copy to MarkLogic if build succeeded
-            if [[ "$build_success" == true ]]; then
-                if ! copy_to_marklogic; then
-                    error_message="Failed to copy to MarkLogic 3rdParty directory"
-                    build_success=false
-                elif [[ -n "$ML_DIR" ]] && prompt_build_marklogic && ! build_marklogic_test; then
-                    error_message="MarkLogic build test failed"
-                    build_success=false
-                fi
-            fi
+        elif ! build_fips; then
+            error_message="FIPS build failed"
+            build_success=false
+        elif ! build_openssl; then
+            error_message="OpenSSL build failed"
+            build_success=false
+        elif ! copy_to_marklogic; then
+            error_message="Failed to copy to MarkLogic 3rdParty directory"
+            build_success=false
+        elif [[ -n "$ML_DIR" ]] && prompt_build_marklogic && ! build_marklogic_test; then
+            error_message="MarkLogic build test failed"
+            build_success=false
         fi
     fi
     
