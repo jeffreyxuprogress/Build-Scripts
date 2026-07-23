@@ -890,7 +890,7 @@ if errorlevel 1 (
 REM Configure FIPS build
 echo [INFO] Configuring OpenSSL %OPENSSL3_FIPS_VERSION%...
 cd /d "%FIPS_SRC_DIR%"
-perl Configure enable-fips --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%FIPS_LOG%" 2>&1
+perl Configure enable-fips no-asm --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%FIPS_LOG%" 2>&1
 if errorlevel 1 (
     echo [ERROR] FIPS configuration failed. Check log: %FIPS_LOG%
     exit /b 1
@@ -944,7 +944,7 @@ if errorlevel 1 (
 REM Configure main build
 echo [INFO] Configuring OpenSSL %OPENSSL_VERSION%...
 cd /d "%MAIN_SRC_DIR%"
-perl Configure enable-fips --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%MAIN_LOG%" 2>&1
+perl Configure enable-fips no-asm --api=1.0.2 --prefix="C:\Program Files\MarkLogic" --openssldir="C:\Program Files\MarkLogic\ssl" VC-WIN64A > "%MAIN_LOG%" 2>&1
 if errorlevel 1 (
     echo [ERROR] Main configuration failed. Check log: %MAIN_LOG%
     exit /b 1
