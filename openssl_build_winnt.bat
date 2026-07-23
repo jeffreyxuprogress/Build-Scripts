@@ -133,10 +133,6 @@ if "%BUILD_ARCH%"=="32" (
 )
 
 REM Add required tools to PATH only if not already present
-REM Check and add Strawberry Perl
-echo ;%PATH%; | %SystemRoot%\System32\find.exe /C /I ";C:\Strawberry\perl\bin;" >nul 2>&1
-if errorlevel 1 set "PATH=C:\Strawberry\perl\bin;%PATH%"
-
 REM Check and add Git usr\bin (for tar)
 echo ;%PATH%; | %SystemRoot%\System32\find.exe /C /I ";C:\Program Files\Git\usr\bin;" >nul 2>&1
 if errorlevel 1 set "PATH=C:\Program Files\Git\usr\bin;%PATH%"
@@ -144,6 +140,10 @@ if errorlevel 1 set "PATH=C:\Program Files\Git\usr\bin;%PATH%"
 REM Check and add Git bin
 echo ;%PATH%; | %SystemRoot%\System32\find.exe /C /I ";C:\Program Files\Git\bin;" >nul 2>&1
 if errorlevel 1 set "PATH=C:\Program Files\Git\bin;%PATH%"
+
+REM Check and add Strawberry Perl (MUST be after Git to take priority over Git's bundled perl)
+echo ;%PATH%; | %SystemRoot%\System32\find.exe /C /I ";C:\Strawberry\perl\bin;" >nul 2>&1
+if errorlevel 1 set "PATH=C:\Strawberry\perl\bin;%PATH%"
 
 echo [INFO] Environment setup complete
 
