@@ -1164,7 +1164,7 @@ for %%m in (%MSVC_VERSIONS%) do (
         if not exist "%ML_3RDPARTY%\winnt\amd64-%%m" mkdir "%ML_3RDPARTY%\winnt\amd64-%%m"
         
         echo [INFO] Copying 64-bit libraries to amd64-%%m...
-        copy /y "%INSTALL_DIR%\winnt\amd64\*.*" "%ML_3RDPARTY%\winnt\amd64-%%m\" >nul
+        %SystemRoot%\System32\xcopy.exe /s /y /i /q "%INSTALL_DIR%\winnt\amd64" "%ML_3RDPARTY%\winnt\amd64-%%m\" >nul
     )
     
     if exist "%INSTALL_DIR%\winnt\i686" (
@@ -1172,7 +1172,60 @@ for %%m in (%MSVC_VERSIONS%) do (
         if not exist "%ML_3RDPARTY%\winnt\i686-%%m" mkdir "%ML_3RDPARTY%\winnt\i686-%%m"
         
         echo [INFO] Copying 32-bit libraries to i686-%%m...
-        copy /y "%INSTALL_DIR%\winnt\i686\*.*" "%ML_3RDPARTY%\winnt\i686-%%m\" >nul
+        %SystemRoot%\System32\xcopy.exe /s /y /i /q "%INSTALL_DIR%\winnt\i686" "%ML_3RDPARTY%\winnt\i686-%%m\" >nul
+    )
+)
+
+REM Copy ssl config files for OpenSSL 3.x
+if "%BUILD_OPENSSL3%"=="1" (
+    echo [INFO] Setting up ssl config directory at: %ML_3RDPARTY%\winnt\ssl
+    if not exist "%ML_3RDPARTY%\winnt\ssl" mkdir "%ML_3RDPARTY%\winnt\ssl"
+
+    REM Copy openssl.cnf from main build
+    if exist "%INSTALL_DIR%\winnt\amd64\openssl.cnf" (
+        copy /y "%INSTALL_DIR%\winnt\amd64\openssl.cnf" "%ML_3RDPARTY%\winnt\ssl\" >nul
+        echo [INFO]   openssl.cnf copied
+    )
+
+    REM Copy fipsmodule.cnf from FIPS build
+    if exist "%INSTALL_DIR%\winnt\amd64\fipsmodule.cnf" (
+        copy /y "%INSTALL_DIR%\winnt\amd64\fipsmodule.cnf" "%ML_3RDPARTY%\winnt\ssl\" >nul
+        echo [INFO]   fipsmodule.cnf copied
+    )
+
+    REM Generate openssl-fips.cnf by patching openssl.cnf
+    set "SCRIPT_DIR=%~dp0"
+    if exist "%ML_3RDPARTY%\winnt\ssl\openssl.cnf" (
+        if exist "!SCRIPT_DIR!openssl-fips.patch" (
+            copy /y "%ML_3RDPARTY%\winnt\ssl\openssl.cnf" "%ML_3RDPARTY%\winnt\ssl\openssl-fips.cnf" >nul
+            cd /d "%ML_3RDPARTY%\winnt\ssl"
+            patch openssl-fips.cnf < "!SCRIPT_DIR!openssl-fips.patch" >nul 2>&1
+            echo [INFO]   openssl-fips.cnf generated via patch
+        ) else (
+            echo [WARN]   openssl-fips.patch not found at: !SCRIPT_DIR!
+        )
+
+        REM Generate openssl-fips-upgrade.cnf
+        if exist "!SCRIPT_DIR!openssl-fips-upgrade.patch" (
+            copy /y "%ML_3RDPARTY%\winnt\ssl\openssl.cnf" "%ML_3RDPARTY%\winnt\ssl\openssl-fips-upgrade.cnf" >nul
+            cd /d "%ML_3RDPARTY%\winnt\ssl"
+            patch openssl-fips-upgrade.cnf < "!SCRIPT_DIR!openssl-fips-upgrade.patch" >nul 2>&1
+            echo [INFO]   openssl-fips-upgrade.cnf generated via patch
+        ) else (
+            echo [WARN]   openssl-fips-upgrade.patch not found at: !SCRIPT_DIR!
+        )
+    )
+
+    REM Generate fipsmodule-upgrade.cnf
+    if exist "%ML_3RDPARTY%\winnt\ssl\fipsmodule.cnf" (
+        if exist "!SCRIPT_DIR!fipsmodule-upgrade.patch" (
+            copy /y "%ML_3RDPARTY%\winnt\ssl\fipsmodule.cnf" "%ML_3RDPARTY%\winnt\ssl\fipsmodule-upgrade.cnf" >nul
+            cd /d "%ML_3RDPARTY%\winnt\ssl"
+            patch fipsmodule-upgrade.cnf < "!SCRIPT_DIR!fipsmodule-upgrade.patch" >nul 2>&1
+            echo [INFO]   fipsmodule-upgrade.cnf generated via patch
+        ) else (
+            echo [WARN]   fipsmodule-upgrade.patch not found at: !SCRIPT_DIR!
+        )
     )
 )
 
