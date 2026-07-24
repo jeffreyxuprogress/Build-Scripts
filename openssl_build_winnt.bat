@@ -1433,13 +1433,10 @@ set "OPENSSL_VERSION="
 
 REM Method 1: Look for opensslv.h in include\openssl
 if exist "%INSTALL_DIR%\include\openssl\opensslv.h" (
-    for /f "tokens=3 delims= " %%v in ('%SystemRoot%\System32\findstr.exe /C:"OPENSSL_VERSION_TEXT" "%INSTALL_DIR%\include\openssl\opensslv.h"') do (
-        set "VERSION_STRING=%%v"
-        goto :parse_version_method1
-    )
-    :parse_version_method1
-    set "OPENSSL_VERSION=!VERSION_STRING:~1,-1!"
-    echo [INFO] Detected OpenSSL version from opensslv.h: !OPENSSL_VERSION!
+    for /f "tokens=5 delims= " %%v in ('%SystemRoot%\System32\findstr.exe /C:"OPENSSL_VERSION_TEXT" "%INSTALL_DIR%\include\openssl\opensslv.h"') do (
+        set "OPENSSL_VERSION=%%v"
+        echo [INFO] Detected OpenSSL version from opensslv.h: !OPENSSL_VERSION!
+        goto :version_detected
 )
 
 REM Method 2: If no version yet, try detecting from tarballs in the openssl directory
