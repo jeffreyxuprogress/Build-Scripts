@@ -1370,9 +1370,10 @@ if not defined OPENSSL_DIR (
     
     REM Check if we're in an openssl directory
     for %%I in ("%WORK_DIR%") do set "DIR_NAME=%%~nxI"
-    if /i "%DIR_NAME%"=="openssl" (
+    echo !DIR_NAME! | %SystemRoot%\System32\find.exe /I "openssl" >nul 2>&1
+    if not errorlevel 1 (
         set "OPENSSL_DIR=%WORK_DIR%"
-        echo [INFO] Using openssl directory: %OPENSSL_DIR%
+        echo [INFO] Using openssl directory: !OPENSSL_DIR!
     ) else if exist "%WORK_DIR%\openssl" (
         set "OPENSSL_DIR=%WORK_DIR%\openssl"
         echo [INFO] Using openssl directory: %OPENSSL_DIR%
