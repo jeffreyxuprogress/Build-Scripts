@@ -1263,20 +1263,26 @@ REM Backup the original makefile
 copy /y "%MAKEFILE%" "%MAKEFILE%.bak.%BUILD_TIMESTAMP%" >nul
 echo [INFO]   Created backup: %MAKEFILE%.bak.%BUILD_TIMESTAMP%
 
-REM Update the OPENSSL_VERSION line using batch commands
+REM Update the OPENSSL_VERSION line using sed (from Git)
 echo [INFO]   Updating OPENSSL_VERSION in makefile to: %OPENSSL_VERSION%
-set "TEMP_FILE=%MAKEFILE%.tmp"
-del "%TEMP_FILE%" 2>nul
-for /f "usebackq tokens=* delims=" %%i in ("%MAKEFILE%") do (
-    set "line=%%i"
-    echo !line! | %SystemRoot%\System32\findstr.exe /b /c:"OPENSSL_VERSION" >nul 2>&1
-    if errorlevel 1 (
-        echo %%i>> "%TEMP_FILE%"
-    ) else (
-        echo OPENSSL_VERSION = %OPENSSL_VERSION%>> "%TEMP_FILE%"
+sed -i "s/^OPENSSL_VERSION = .*/OPENSSL_VERSION = %OPENSSL_VERSION%/" "%MAKEFILE%"
+if errorlevel 1 (
+    echo [WARN]   sed failed, trying manual update...
+    set "TEMP_FILE=%MAKEFILE%.tmp"
+    del "!TEMP_FILE!" 2>nul
+    for /f "usebackq tokens=* delims=" %%i in ("%MAKEFILE%") do (
+        set "line=%%i"
+        echo !line! | %SystemRoot%\System32\findstr.exe /b /c:"OPENSSL_VERSION " >nul 2>&1
+        if errorlevel 1 (
+            echo.%%i>> "!TEMP_FILE!"
+        ) else (
+            echo.OPENSSL_VERSION = %OPENSSL_VERSION%>> "!TEMP_FILE!"
+        )
     )
+    move /y "!TEMP_FILE!" "%MAKEFILE%" >nul 2>&1
+) else (
+    echo [INFO]   Makefile updated successfully
 )
-move /y "%TEMP_FILE%" "%MAKEFILE%" >nul 2>&1
 
 REM Build MarkLogic if ML_DIR is provided
 call :build_marklogic
