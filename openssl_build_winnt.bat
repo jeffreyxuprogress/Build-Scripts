@@ -911,6 +911,24 @@ if errorlevel 1 (
     echo [ERROR] FIPS install failed. Check log: %FIPS_LOG%
     exit /b 1
 )
+
+REM Regenerate fipsmodule.cnf with correct MAC for the built fips.dll
+echo [INFO] Running fipsinstall to generate correct module MAC...
+set "FIPS_DLL_PATH=%FIPS_INSTALL_DIR%\Program Files\MarkLogic\lib\ossl-modules\fips.dll"
+set "FIPS_CNF_PATH=%FIPS_INSTALL_DIR%\Program Files\MarkLogic\ssl\fipsmodule.cnf"
+set "FIPS_OPENSSL_EXE=%FIPS_SRC_DIR%\apps\openssl.exe"
+if exist "!FIPS_DLL_PATH!" (
+    "!FIPS_OPENSSL_EXE!" fipsinstall -module "!FIPS_DLL_PATH!" -out "!FIPS_CNF_PATH!" -provider_name fips >> "%FIPS_LOG%" 2>&1
+    if errorlevel 1 (
+        echo [WARN] fipsinstall failed, using MAC from nmake install
+    ) else (
+        echo [INFO] fipsmodule.cnf regenerated with correct MAC
+    )
+) else (
+    echo [WARN] fips.dll not found at expected path, skipping fipsinstall
+    echo [WARN] Looked for: !FIPS_DLL_PATH!
+)
+
 echo [INFO] OpenSSL %OPENSSL3_FIPS_VERSION% build complete.
 
 REM ---- Step 2: Build main OpenSSL version for libraries ----
