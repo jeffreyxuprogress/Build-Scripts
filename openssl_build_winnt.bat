@@ -1394,10 +1394,15 @@ if not exist "INSTALL_DIR" (
 )
 
 REM Find the most recent directory (sorted by name descending - timestamps sort correctly)
+REM Skip fips-* directories (those are intermediate FIPS builds, not the final assembly)
 set "LATEST_BUILD="
 for /f "delims=" %%d in ('dir /b /ad /o-n "INSTALL_DIR\*" 2^>nul') do (
-    set "LATEST_BUILD=%%d"
-    goto :found_latest_build
+    set "_CANDIDATE=%%d"
+    echo !_CANDIDATE! | %SystemRoot%\System32\find.exe /I "fips-" >nul 2>&1
+    if errorlevel 1 (
+        set "LATEST_BUILD=%%d"
+        goto :found_latest_build
+    )
 )
 :found_latest_build
 
@@ -1437,7 +1442,26 @@ if exist "%INSTALL_DIR%\include\openssl\opensslv.h" (
     echo [INFO] Detected OpenSSL version from opensslv.h: !OPENSSL_VERSION!
 )
 
-REM Method 2: If no version yet, try looking at what's already in MarkLogic 3rdParty
+REM Method 2: If no version yet, try detecting from tarballs in the openssl directory
+if not defined OPENSSL_VERSION (
+    for /f "delims=" %%f in ('dir /b /o-n "%OPENSSL_DIR%\openssl-3*.tar.gz" 2^>nul') do (
+        set "_TARNAME=%%~nf"
+        REM Strip .tar from the name (%%~nf removes .gz, need to also remove .tar)
+        set "OPENSSL_VERSION=!_TARNAME:openssl-=!"
+        set "OPENSSL_VERSION=!OPENSSL_VERSION:.tar=!"
+        echo [INFO] Detected version from tarball: !OPENSSL_VERSION!
+        goto :version_detected
+    )
+    for /f "delims=" %%f in ('dir /b /o-n "%OPENSSL_DIR%\openssl-1*.tar.gz" 2^>nul') do (
+        set "_TARNAME=%%~nf"
+        set "OPENSSL_VERSION=!_TARNAME:openssl-=!"
+        set "OPENSSL_VERSION=!OPENSSL_VERSION:.tar=!"
+        echo [INFO] Detected version from tarball: !OPENSSL_VERSION!
+        goto :version_detected
+    )
+)
+
+REM Method 3: If no version yet, try looking at what's already in MarkLogic 3rdParty
 if not defined OPENSSL_VERSION (
     if exist "%ML_DIR%\3rdParty\openssl" (
         echo [INFO] Checking existing MarkLogic OpenSSL installations...
@@ -1449,7 +1473,7 @@ if not defined OPENSSL_VERSION (
     )
 )
 
-REM Method 3: Ask user to specify version
+REM Method 4: Ask user to specify version
 if not defined OPENSSL_VERSION (
     echo [ERROR] Cannot automatically detect OpenSSL version
     echo [ERROR] Please manually check %INSTALL_DIR%
