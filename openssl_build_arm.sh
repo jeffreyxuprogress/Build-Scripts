@@ -308,7 +308,7 @@ build_openssl() {
     
     # Configure OpenSSL (without FIPS for ARM)
     log_info "Configuring OpenSSL..."
-    if ! CC="$CC_PATH" ./config shared >> "$build_log" 2>&1; then
+    if ! CC="$CC_PATH" ./config shared --api=1.0.2 >> "$build_log" 2>&1; then
         log_error "OpenSSL configuration failed. Check log: $build_log"
         return 1
     fi
