@@ -28,13 +28,14 @@ WORK_DIR="${2:-$(pwd)}"             # Default work directory is current director
 ML_DIR="${3:-}"                      # MarkLogic directory (optional)
 BUILD_ML_FLAG=false                  # Flag to automatically build MarkLogic
 SKIP_FIPS_FLAG=false                 # Flag to skip FIPS build and use existing installation
+SKIP_GIT_UPDATE=false                # Flag to skip git fetch/rebase
 
 # Convert WORK_DIR to absolute path
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"
 
 # Separate git repo directory from tarball directory
 # If we're already in an openssl directory with tarballs, use it directly
-if [[ "$(basename "$(pwd)")" == "openssl" ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
+if [[ "$(basename "$(pwd)")" == *openssl* ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
     # We're in an openssl directory with tarballs - use current directory
     TARBALL_DIR="$(pwd)"
     OPENSSL_DIR="$TARBALL_DIR"  # Same location for git repo
@@ -510,46 +511,14 @@ setup_openssl_repo() {
     local current_dir=$(basename "$(pwd)")
     local parent_dir=$(basename "$(dirname "$(pwd)")")
     
-    if [[ "$current_dir" == "openssl" ]] && [[ -d ".git" ]]; then
-        log_info "Already in openssl directory, updating repository..."
-        
-        # Fetch latest changes and rebase
-        log_info "Fetching latest changes..."
-        if ! git fetch origin; then
-            log_error "Failed to fetch from origin"
-            return 1
-        fi
-        
-        # Get current branch
-        current_branch=$(git rev-parse --abbrev-ref HEAD)
-        log_info "Current branch: $current_branch"
-        
-        # Rebase current branch
-        log_info "Rebasing $current_branch..."
-        if ! git rebase origin/$current_branch; then
-            log_warn "Rebase failed, you may need to resolve conflicts manually"
-            return 1
-        fi
-        
-        # Update OPENSSL_DIR to current directory
-        OPENSSL_DIR="$(pwd)"
-        INSTALL_DIR_BASE="$OPENSSL_DIR/INSTALL_DIR"
-        LOGS_DIR="$OPENSSL_DIR/logs"
-        
-    else
-        # Not in openssl directory, proceed with normal logic
-        cd "$WORK_DIR"
-        
-        if [[ -d "openssl" ]]; then
-            log_info "OpenSSL directory exists, updating repository..."
-            cd openssl
-            
-            # Check if it's a valid git repository
-            if [[ ! -d ".git" ]]; then
-                log_error "openssl directory exists but is not a git repository"
-                log_error "Please remove the directory or specify a different work directory"
-                return 1
-            fi
+    if [[ "$current_dir" == *openssl* ]] && [[ -d ".git" ]]; then
+        if [[ "$SKIP_GIT_UPDATE" == true ]]; then
+            log_info "Skipping git update (--skip-git-update flag set)"
+            OPENSSL_DIR="$(pwd)"
+            INSTALL_DIR_BASE="$OPENSSL_DIR/INSTALL_DIR"
+            LOGS_DIR="$OPENSSL_DIR/logs"
+        else
+            log_info "Already in openssl directory, updating repository..."
             
             # Fetch latest changes and rebase
             log_info "Fetching latest changes..."
@@ -567,6 +536,49 @@ setup_openssl_repo() {
             if ! git rebase origin/$current_branch; then
                 log_warn "Rebase failed, you may need to resolve conflicts manually"
                 return 1
+            fi
+            
+            # Update OPENSSL_DIR to current directory
+            OPENSSL_DIR="$(pwd)"
+            INSTALL_DIR_BASE="$OPENSSL_DIR/INSTALL_DIR"
+            LOGS_DIR="$OPENSSL_DIR/logs"
+        fi
+        
+    else
+        # Not in openssl directory, proceed with normal logic
+        cd "$WORK_DIR"
+        
+        if [[ -d "openssl" ]]; then
+            log_info "OpenSSL directory exists, updating repository..."
+            cd openssl
+            
+            # Check if it's a valid git repository
+            if [[ ! -d ".git" ]]; then
+                log_error "openssl directory exists but is not a git repository"
+                log_error "Please remove the directory or specify a different work directory"
+                return 1
+            fi
+            
+            if [[ "$SKIP_GIT_UPDATE" != true ]]; then
+                # Fetch latest changes and rebase
+                log_info "Fetching latest changes..."
+                if ! git fetch origin; then
+                    log_error "Failed to fetch from origin"
+                    return 1
+                fi
+                
+                # Get current branch
+                current_branch=$(git rev-parse --abbrev-ref HEAD)
+                log_info "Current branch: $current_branch"
+                
+                # Rebase current branch
+                log_info "Rebasing $current_branch..."
+                if ! git rebase origin/$current_branch; then
+                    log_warn "Rebase failed, you may need to resolve conflicts manually"
+                    return 1
+                fi
+            else
+                log_info "Skipping git update (--skip-git-update flag set)"
             fi
             
         else
@@ -1285,6 +1297,15 @@ main() {
         ML_DIR="${3:-}"
     fi
     
+    # Handle skip-git-update parameter
+    if [[ "$1" == "--skip-git-update" ]]; then
+        SKIP_GIT_UPDATE=true
+        shift
+        TARGET_BRANCH="${1:-develop}"
+        WORK_DIR="${2:-$(pwd)}"
+        ML_DIR="${3:-}"
+    fi
+    
     # Handle clean parameter
     if [[ "$1" == "--clean" ]]; then
         # Shift parameters to get optional work_dir and ml_dir
@@ -1296,7 +1317,7 @@ main() {
         WORK_DIR="$(cd "$WORK_DIR" && pwd)"
         
         # Set up directories
-        if [[ "$(basename "$(pwd)")" == "openssl" ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
+        if [[ "$(basename "$(pwd)")" == *openssl* ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
             OPENSSL_DIR="$(pwd)"
             BUILD_DIR="$(pwd)"
         else
@@ -1319,7 +1340,7 @@ main() {
         WORK_DIR="$(cd "$WORK_DIR" && pwd)"
         
         # Set up directories
-        if [[ "$(basename "$(pwd)")" == "openssl" ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
+        if [[ "$(basename "$(pwd)")" == *openssl* ]] && ls openssl-*.tar.gz 1> /dev/null 2>&1; then
             OPENSSL_DIR="$(pwd)"
             BUILD_DIR="$(pwd)"
         else
